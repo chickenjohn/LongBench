@@ -12,7 +12,11 @@ from llama_flash_attn_monkey_patch import replace_llama_attn_with_flash_attn
 def parse_args(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default=None, choices=["llama2-7b-chat-4k", "longchat-v1.5-7b-32k", "xgen-7b-8k", "internlm-7b-8k", "chatglm2-6b", "chatglm2-6b-32k", "vicuna-v1.5-7b-16k"])
+    parser.add_argument('--dataset', nargs='*', default=[])
+    parser.add_argument('--local_rank', type=int, default=0, help="rank number")
     parser.add_argument('--e', action='store_true', help="Evaluate on LongBench-E")
+    parser.add_argument('--deepspeed', action='store_true', help="Enable Deepspeed Inference")
+    parser.add_argument('--num_insts', type=int, default=-1, help="#instances to use")
     return parser.parse_args(args)
 
 # This is the customized building prompt for chat models
@@ -44,8 +48,9 @@ def post_process(response, model_name):
         response = response.split("<eoa>")[0]
     return response
 
-def get_pred(model, tokenizer, data, max_length, max_gen, prompt_format, dataset, device, model_name):
+def get_pred(model, tokenizer, data, max_length, max_gen, prompt_format, dataset, device, model_name, deepspeed=False, num_insts=-1):
     preds = []
+    insts_counter = 0
     for json_obj in tqdm(data):
         prompt = prompt_format.format(**json_obj)
         # truncate to fit max_length (we suggest truncate in the middle, since the left and right side may contain crucial instructions)
@@ -57,6 +62,9 @@ def get_pred(model, tokenizer, data, max_length, max_gen, prompt_format, dataset
             prompt = build_chat(tokenizer, prompt, model_name)
         input = tokenizer(prompt, truncation=False, return_tensors="pt").to(device)
         context_length = input.input_ids.shape[-1]
+        print(f"curr_len: {context_length}")
+        if context_length > 6000:
+            continue
         if dataset == "samsum": # prevent illegal output on samsum (model endlessly repeat "\nDialogue"), might be a prompting issue
             output = model.generate(
                 **input,
@@ -68,6 +76,25 @@ def get_pred(model, tokenizer, data, max_length, max_gen, prompt_format, dataset
                 eos_token_id=[tokenizer.eos_token_id, tokenizer.encode("\n", add_special_tokens=False)[-1]],
             )[0]
         else:
+            if deepspeed:
+                import deepspeed
+                ds_engine = deepspeed.init_inference(
+                    model,
+                    mp_size=1,
+                    dtype=torch.half,
+                    checkpoint=None,
+                    replace_with_kernel_inject=True,
+                    zero = {
+                        "stage": 3,
+                        "offload_param": {
+                            "device": "cpu",
+                            "pin_memory": True
+                        },
+                        "overlap_comm": False
+                    }
+                )
+                model = ds_engine.module
+
             output = model.generate(
                 **input,
                 max_new_tokens=max_gen,
@@ -78,6 +105,10 @@ def get_pred(model, tokenizer, data, max_length, max_gen, prompt_format, dataset
         pred = tokenizer.decode(output[context_length:], skip_special_tokens=True)
         pred = post_process(pred, model_name)
         preds.append({"pred": pred, "answers": json_obj["answers"], "all_classes": json_obj["all_classes"], "length": json_obj["length"]})
+        insts_counter += 1
+        if num_insts > 0 and insts_counter == num_insts:
+            break
+
     return preds
 
 def seed_everything(seed):
@@ -91,6 +122,7 @@ def seed_everything(seed):
 
 def load_model_and_tokenizer(path, model_name, device):
     if "chatglm" in model_name or "internlm" in model_name or "xgen" in model_name:
+        print("loading chatglm")
         tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
         model = AutoModelForCausalLM.from_pretrained(path, trust_remote_code=True, torch_dtype=torch.bfloat16).to(device)
     elif "llama2" in model_name:
@@ -124,7 +156,9 @@ if __name__ == '__main__':
     # define your model
     model, tokenizer = load_model_and_tokenizer(model2path[model_name], model_name, device)
     max_length = model2maxlen[model_name]
-    if args.e:
+    if args.dataset:
+        datasets = args.dataset
+    elif args.e:
         datasets = ["qasper", "multifieldqa_en", "hotpotqa", "2wikimqa", "gov_report", "multi_news", \
             "trec", "triviaqa", "samsum", "passage_count", "passage_retrieval_en", "lcc", "repobench-p"]
     else:
@@ -152,7 +186,17 @@ if __name__ == '__main__':
             out_path = f"pred/{model_name}/{dataset}.jsonl"
         prompt_format = dataset2prompt[dataset]
         max_gen = dataset2maxlen[dataset]
-        preds = get_pred(model, tokenizer, data, max_length, max_gen, prompt_format, dataset, device, model_name)
+        preds = get_pred(model, 
+                         tokenizer, 
+                         data, 
+                         max_length, 
+                         max_gen, 
+                         prompt_format, 
+                         dataset, 
+                         device, 
+                         model_name, 
+                         args.deepspeed,
+                         args.num_insts)
         with open(out_path, "w", encoding="utf-8") as f:
             for pred in preds:
                 json.dump(pred, f, ensure_ascii=False)
