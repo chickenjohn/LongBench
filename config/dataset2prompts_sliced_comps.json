@@ -1,0 +1,14 @@
+{
+    "hotpotqa": {
+        "inst1": "Answer the question based on the given passages. Only give me the answer and do not output any other words.\n\nThe following are given passages.\n",
+        "inst2": "Answer the question based on the given passages. Only give me the answer and do not output any other words.\n\n",
+        "ques_prefix": "Question: ",
+        "ans_prefix": "Answer:"
+    },
+    "multifieldqa_en": {
+        "inst1": "Read the following text and answer briefly.\n\n",
+        "inst2": "Now, answer the following question based on the above text, only give me the answer and do not output any other words.\n\n",
+        "ques_prefix": "Question: ",
+        "ans_prefix": "Answer:" 
+    }
+}
