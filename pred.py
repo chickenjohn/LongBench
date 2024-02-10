@@ -171,20 +171,19 @@ def get_pred_sliced(model, tokenizer, data, max_length, max_gen, prompt_format_s
                 model = ds_engine.module
 
             # create a random inst id and save slice info
-            attn_path = "/chronos_data/tji/.huggingface_cache/transformers/chatglm2-6b-32k-attn-bfp20-1e-3-sta/"
+            attn_path = "/chronos_data/tji/.huggingface_cache/transformers/chatglm2-6b-32k-attn-bfp20-1e-3-hotpotqa-bprune-scaled/"
             inst_id = su.random(length=8)
             with open(attn_path + f"i{inst_id}.json", "w") as f:
                 json.dump(compos_pos, f)
                 
-
             output = model.generate(
                 **input,
                 max_new_tokens=max_gen,
                 num_beams=1,
                 do_sample=False,
                 temperature=1.0,
-                attn_dump_path=attn_path + f"i{inst_id}",
-                # attn_dump_path=None,
+                # attn_dump_path=attn_path + f"i{inst_id}",
+                attn_dump_path=None,
             )[0]
         pred = tokenizer.decode(output[context_length:], skip_special_tokens=True)
         pred = post_process(pred, model_name)
@@ -199,7 +198,7 @@ def seed_everything(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     np.random.seed(seed)
-    random.seed(seed)
+    random.seed(seed)   
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
     torch.cuda.manual_seed_all(seed)

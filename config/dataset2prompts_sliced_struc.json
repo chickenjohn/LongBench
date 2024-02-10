@@ -6,5 +6,9 @@
     "multifieldqa_en": {
         "involved_members": ["inst1", "context", "inst2", "ques_prefix", "input", "ans_prefix"],
         "struct": "{inst1}{context}\n\n{inst2}{ques_prefix}{input}\n{ans_prefix}"
+    },
+    "multifieldqa_zh": {
+        "involved_members": ["inst1", "context", "inst2", "ques_prefix", "input", "ans_prefix"],
+        "struct": "{inst1}{context}\n\n{inst2}{ques_prefix}{input}\n{ans_prefix}"
     }
 }
